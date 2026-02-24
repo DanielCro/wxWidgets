@@ -2424,7 +2424,11 @@ void wxAuiManager::LayoutAddDock(wxSizer* cont,
         }
     }
 
-    if (dock.dock_direction == wxAUI_DOCK_CENTER || has_maximized_pane)
+    // For notebook-internal managers, use proportional sizing for all docks
+    // so that split tab panes resize proportionally. For top-level managers,
+    // only the center dock is proportional (side/bottom docks stay fixed).
+    if (dock.dock_direction == wxAUI_DOCK_CENTER || has_maximized_pane
+        || wxDynamicCast(m_frame, wxAuiNotebook))
         sizer_item = cont->Add(dock_sizer, 1, wxEXPAND);
     else
         sizer_item = cont->Add(dock_sizer, 0, wxEXPAND);
@@ -2438,10 +2442,16 @@ void wxAuiManager::LayoutAddDock(wxSizer* cont,
     part.sizer_item = sizer_item;
     uiparts.Add(part);
 
-    if (dock.IsHorizontal())
-        cont->SetItemMinSize(dock_sizer, 0, dock.size);
-    else
-        cont->SetItemMinSize(dock_sizer, dock.size, 0);
+    // For notebook-internal managers, don't constrain docks with MinSize
+    // based on their current pixel size — it locks the CENTER dock at its
+    // full initial width and prevents proportional resizing from working.
+    if (!wxDynamicCast(m_frame, wxAuiNotebook))
+    {
+        if (dock.IsHorizontal())
+            cont->SetItemMinSize(dock_sizer, 0, dock.size);
+        else
+            cont->SetItemMinSize(dock_sizer, dock.size, 0);
+    }
 
     //  top and left docks have a sash after them
     if (!m_hasMaximized &&
