@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <_PropertySheetDisplayName>wxWidgets Setup Options</_PropertySheetDisplayName>
@@ -13,7 +13,7 @@
     </wxCfg>
     <wxSuffix>u</wxSuffix>
     <wxVendor>custom</wxVendor>
-    <wxRuntimeLibs>dynamic</wxRuntimeLibs>
+    <wxRuntimeLibs>static</wxRuntimeLibs>
     <wxReleaseRuntimeLibrary>MultiThreadedDLL</wxReleaseRuntimeLibrary>
     <wxDebugRuntimeLibrary>MultiThreadedDebugDLL</wxDebugRuntimeLibrary>
   </PropertyGroup>
