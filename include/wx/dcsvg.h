@@ -35,8 +35,6 @@ enum wxSVGShapeRenderingMode
     wxSVG_SHAPE_RENDERING_OPTIMISE_SPEED = wxSVG_SHAPE_RENDERING_OPTIMIZE_SPEED
 };
 
-class WXDLLIMPEXP_FWD_BASE wxFileOutputStream;
-
 class WXDLLIMPEXP_FWD_CORE wxSVGFileDC;
 
 // Base class for bitmap handlers used by wxSVGFileDC, used by the standard
@@ -145,6 +143,10 @@ public:
     void SetBitmapHandler(wxSVGBitmapHandler* handler);
 
     void SetShapeRenderingMode(wxSVGShapeRenderingMode renderingMode);
+
+    wxString GetSVGDocument() const;
+
+    bool Save();
 
 private:
     virtual bool DoGetPixel(wxCoord WXUNUSED(x), wxCoord WXUNUSED(y),
@@ -273,10 +275,11 @@ private:
 
     wxString            m_filename;
     bool                m_writeError;
+    bool                m_saved;
     bool                m_graphics_changed;  // set by Set{Brush,Pen}()
     int                 m_width, m_height;
     double              m_dpi;
-    std::unique_ptr<wxFileOutputStream> m_outfile;
+    wxString            m_svgDocument;
     std::unique_ptr<wxSVGBitmapHandler> m_bmp_handler; // class to handle bitmaps
     wxSVGShapeRenderingMode m_renderingMode;
 
@@ -286,10 +289,10 @@ private:
 
     // Unique ID for every clipping graphics group: this is simply always
     // incremented in each SetClippingRegion() call.
-    size_t m_clipUniqueId;
+    static size_t m_clipUniqueId;
 
     // Unique ID for every gradient.
-    size_t m_gradientUniqueId;
+    static size_t m_gradientUniqueId;
 
     wxDECLARE_ABSTRACT_CLASS(wxSVGFileDCImpl);
     wxDECLARE_NO_COPY_CLASS(wxSVGFileDCImpl);
@@ -322,6 +325,11 @@ public:
     void SetBitmapHandler(wxSVGBitmapHandler* handler);
 
     void SetShapeRenderingMode(wxSVGShapeRenderingMode renderingMode);
+
+    // Return the SVG document as a string.
+    wxString GetSVGDocument() const;
+
+    bool Save();
 
 private:
     wxDECLARE_ABSTRACT_CLASS(wxSVGFileDC);

@@ -611,7 +611,7 @@ void wxGLCanvasEGL::OnRealized()
     {
         if ( m_surface != EGL_NO_SURFACE )
         {
-            eglDestroySurface(m_surface, m_display);
+            eglDestroySurface(m_display, m_surface);
             m_surface = EGL_NO_SURFACE;
         }
 
@@ -683,9 +683,43 @@ void wxGLCanvasEGL::OnRealized()
     }
 }
 
+void wxGLCanvasEGL::OnUnrealized()
+{
+    // We would destroy the surface anyhow either in OnRealized() or in the
+    // dtor, but do it here as well just to free it sooner, in case the window
+    // remains unrealized for some time.
+    //
+    // Do it only for X11 as we don't recreate the surface under Wayland.
+#ifdef GDK_WINDOWING_X11
+    if ( m_canvas && wxGTKImpl::IsX11(m_canvas->GTKGetDrawingWindow()) )
+    {
+        if ( m_surface != EGL_NO_SURFACE )
+        {
+            eglDestroySurface(m_display, m_surface);
+            m_surface = EGL_NO_SURFACE;
+        }
+    }
+#endif // GDK_WINDOWING_X11
+}
+
 wxGLCanvasEGL::~wxGLCanvasEGL()
 {
-    if ( m_surface )
+#ifdef GDK_WINDOWING_WAYLAND
+    // Our "unmap" signal handler would be called from wxWindow dtor, so
+    // disconnect it to avoid accessing this object when it's already destroyed
+    // by wxGLCanvas dtor (and it is useless anyhow now as all it does is to
+    // call DestroyWaylandSubsurface() which we already do just below).
+    if ( m_canvas && m_canvas->m_widget )
+    {
+        g_signal_handlers_disconnect_by_func(
+            m_canvas->m_widget,
+            reinterpret_cast<gpointer>(gtk_glcanvas_unmap_callback),
+            this
+        );
+    }
+#endif // GDK_WINDOWING_WAYLAND
+
+    if ( m_surface != EGL_NO_SURFACE )
         eglDestroySurface(m_display, m_surface);
 #ifdef GDK_WINDOWING_WAYLAND
     DestroyWaylandSubsurface();

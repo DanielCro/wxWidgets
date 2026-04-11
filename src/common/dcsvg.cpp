@@ -20,9 +20,10 @@
 
 #include "wx/base64.h"
 #include "wx/dcsvg.h"
-#include "wx/wfstream.h"
+#include "wx/file.h"
 #include "wx/filename.h"
 #include "wx/mstream.h"
+#include "wx/sstream.h"
 #include "wx/scopedarray.h"
 #include "wx/private/rescale.h"
 
@@ -407,6 +408,7 @@ wxSVGBitmapEmbedHandler::ProcessBitmap(const wxBitmap& bmp,
 
     // write image meta information
     wxString s;
+    s.reserve(data.size());
     s += wxString::Format("  <image x=\"%d\" y=\"%d\" width=\"%dpx\" height=\"%dpx\"",
                           x, y, bmp.GetWidth(), bmp.GetHeight());
     s += wxString::Format(" id=\"image%d\" "
@@ -414,13 +416,13 @@ wxSVGBitmapEmbedHandler::ProcessBitmap(const wxBitmap& bmp,
                           sub_images++);
 
     // Wrap Base64 encoded data on 76 columns boundary (same as Inkscape).
-    const unsigned WRAP = 76;
+    constexpr unsigned WRAP = 76;
     for ( size_t i = 0; i < data.size(); i += WRAP )
     {
         if (i < data.size() - WRAP)
-            s += data.Mid(i, WRAP) + "\n";
+            s += data.substr(i, WRAP) + "\n";
         else
-            s += data.Mid(i, s.size() - i) + "\"\n  />\n"; // last line
+            s += data.substr(i) + "\"\n  />\n"; // last line
     }
 
     // write to the SVG file
@@ -501,11 +503,24 @@ void wxSVGFileDC::SetShapeRenderingMode(wxSVGShapeRenderingMode renderingMode)
     ((wxSVGFileDCImpl*)GetImpl())->SetShapeRenderingMode(renderingMode);
 }
 
+wxString wxSVGFileDC::GetSVGDocument() const
+{
+    return ((wxSVGFileDCImpl*)GetImpl())->GetSVGDocument();
+}
+
+bool wxSVGFileDC::Save()
+{
+    return ((wxSVGFileDCImpl*)GetImpl())->Save();
+}
+
 // ----------------------------------------------------------
 // wxSVGFileDCImpl
 // ----------------------------------------------------------
 
 wxIMPLEMENT_ABSTRACT_CLASS(wxSVGFileDCImpl, wxDCImpl);
+
+size_t wxSVGFileDCImpl::m_clipUniqueId = 0;
+size_t wxSVGFileDCImpl::m_gradientUniqueId = 0;
 
 wxSVGFileDCImpl::wxSVGFileDCImpl(wxSVGFileDC* owner, const wxString& filename,
                                  int width, int height, double dpi, const wxString& title)
@@ -523,11 +538,9 @@ void wxSVGFileDCImpl::Init(const wxString& filename, int width, int height,
     m_dpi = dpi;
 
     m_writeError = false;
+    m_saved = false;
 
-    m_clipUniqueId = 0;
     m_clipNestingLevel = 0;
-
-    m_gradientUniqueId = 0;
 
     m_mm_to_pix_x = m_dpi / 25.4;
     m_mm_to_pix_y = m_dpi / 25.4;
@@ -549,33 +562,55 @@ void wxSVGFileDCImpl::Init(const wxString& filename, int width, int height,
 
     m_bmp_handler.reset();
 
-    if ( m_filename.empty() )
-        m_outfile.reset();
-    else
-        m_outfile.reset(new wxFileOutputStream(m_filename));
-
     wxString s;
     s += wxS("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n");
     s += wxS("<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd\">\n\n");
     s += wxS("<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"");
     s += wxString::Format(wxS(" width=\"%scm\" height=\"%scm\" viewBox=\"0 0 %d %d\">\n"),
                           NumStr(m_width / m_dpi * 2.54), NumStr(m_height / m_dpi * 2.54), m_width, m_height);
-    s += wxString::Format(wxS("<title>%s</title>\n"), title);
+    s += wxString::Format(wxS("<title>%s</title>\n"),
+#if wxUSE_MARKUP
+                          wxMarkupParser::Quote(title)
+#else
+                          title
+#endif
+                          );
     s += wxString::Format(wxS("<desc>Created with %s</desc>\n\n"), wxVERSION_STRING);
     s += wxS("<g fill=\"black\" stroke=\"black\" stroke-width=\"1\">\n");
     write(s);
 }
 
-wxSVGFileDCImpl::~wxSVGFileDCImpl()
+wxString wxSVGFileDCImpl::GetSVGDocument() const
 {
-    wxString s;
+    wxString doc(m_svgDocument);
 
     // Close remaining clipping group elements
-    for (size_t i = 0; i < m_clipUniqueId; i++)
-        s += wxS("</g>\n");
+    for (size_t i = 0; i < m_clipNestingLevel; i++)
+        doc += wxS("</g>\n");
 
-    s += wxS("</g>\n</svg>\n");
-    write(s);
+    doc += wxS("</g>\n</svg>\n");
+
+    return doc;
+}
+
+bool wxSVGFileDCImpl::Save()
+{
+    if ( m_saved || m_filename.empty() )
+        return m_saved;
+
+    wxFile file(m_filename, wxFile::write);
+    if ( file.IsOpened() )
+        m_saved = file.Write(GetSVGDocument(), wxConvUTF8) && file.Close();
+
+    if ( !m_saved )
+        m_writeError = true;
+
+    return m_saved;
+}
+
+wxSVGFileDCImpl::~wxSVGFileDCImpl()
+{
+    Save();
 }
 
 void wxSVGFileDCImpl::DoGetSizeMM(int* width, int* height) const
@@ -1234,16 +1269,16 @@ void wxSVGFileDCImpl::DoSetClippingRegion(wxCoord x, wxCoord y, wxCoord width, w
     // graphics can be subsequently changed inside the clipping region)
     svg << "</g>\n"
            "<defs>\n"
-           "  <clipPath id=\"clip" << m_clipNestingLevel << "\">\n"
-           "    <rect id=\"cliprect" << m_clipNestingLevel << "\" "
+           "  <clipPath id=\"clip" << m_clipUniqueId << "\">\n"
+           "    <rect id=\"cliprect" << m_clipUniqueId << "\" "
                 "x=\"" << x << "\" "
                 "y=\"" << y << "\" "
                 "width=\"" << width << "\" "
                 "height=\"" << height << "\" "
-                "stroke=\"gray\" fill=\"none\"/>\n"
+                "stroke=\"none\" fill=\"none\"/>\n"
            "  </clipPath>\n"
            "</defs>\n"
-           "<g clip-path=\"url(#clip" << m_clipNestingLevel << ")\">\n";
+           "<g clip-path=\"url(#clip" << m_clipUniqueId << ")\">\n";
 
     write(svg);
 
@@ -1266,7 +1301,7 @@ void wxSVGFileDCImpl::DestroyClippingRegion()
     svg << "</g>\n";
 
     // Close clipping group elements
-    for (size_t i = 0; i < m_clipUniqueId; i++)
+    for (size_t i = 0; i < m_clipNestingLevel; i++)
     {
         svg << "</g>\n";
     }
@@ -1278,7 +1313,7 @@ void wxSVGFileDCImpl::DestroyClippingRegion()
     // elements for the clipped region have been closed).
     DoStartNewGraphics();
 
-    m_clipUniqueId = 0;
+    m_clipNestingLevel = 0;
 
     // Also update the base class clipping region information.
     wxDCImpl::DestroyClippingRegion();
@@ -1435,28 +1470,17 @@ void wxSVGFileDCImpl::DoDrawBitmap(const wxBitmap& bmp, wxCoord x, wxCoord y,
     if ( AreAutomaticBoundingBoxUpdatesEnabled() )
         CalcBoundingBox(x, y, x + bmp.GetWidth(), y + bmp.GetHeight());
 
-    if ( !m_outfile )
-        return;
-
     // If we don't have any bitmap handler yet, use the default one.
     if ( !m_bmp_handler )
         m_bmp_handler.reset(new wxSVGBitmapFileHandler(m_filename));
 
-    m_writeError = m_bmp_handler->ProcessBitmap(bmp, x, y, *m_outfile);
+    wxStringOutputStream stream(&m_svgDocument);
+    m_writeError = !m_bmp_handler->ProcessBitmap(bmp, x, y, stream);
 }
 
 void wxSVGFileDCImpl::write(const wxString& s)
 {
-    if ( !m_outfile )
-        return;
-
-    if ( m_outfile->IsOk() )
-    {
-        const wxCharBuffer buf = s.utf8_str();
-        m_outfile->Write(buf, strlen((const char*)buf));
-    }
-
-    m_writeError = !m_outfile->IsOk();
+    m_svgDocument += s;
 }
 
 #endif // wxUSE_SVG
