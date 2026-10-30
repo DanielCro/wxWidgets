@@ -456,4 +456,5 @@
 /3rdparty/webview2
 
 /build/cmake/output/
+/build-gtk/
 CMakeUserPresets.json
