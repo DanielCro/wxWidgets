@@ -122,6 +122,12 @@ private:
 
     bool m_readyToDraw = false;
 
+    // Buffer scale of m_wlSurface, and a new one waiting to be set (0 if none):
+    // see SwapBuffers() for why it is not set as soon as it changes.
+    int m_wlBufferScale = 1;
+    int m_wlPendingBufferScale = 0;
+    bool m_wlPendingScaleSwapped = false;
+
     // Called from GTK callbacks and needs access to private members.
     friend void wxEGLUpdateGeometry(GtkWidget* widget, wxGLCanvasEGL* win);
 };

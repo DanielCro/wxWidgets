@@ -464,7 +464,19 @@ void wxEGLUpdateGeometry(GtkWidget* widget, wxGLCanvasEGL* win)
 
     win->UpdateSubsurfacePosition();
 
-    wl_surface_set_buffer_scale(win->m_wlSurface, scale);
+    // Don't set the new buffer scale right now: the buffer of the frame being
+    // drawn may still have the old size, which isn't necessarily a multiple of
+    // the new scale, and attaching it would be a fatal protocol error. It's set
+    // in SwapBuffers() once a frame drawn after this resize is presented.
+    if ( scale != win->m_wlBufferScale )
+    {
+        win->m_wlPendingBufferScale = scale;
+        win->m_wlPendingScaleSwapped = false;
+    }
+    else
+    {
+        win->m_wlPendingBufferScale = 0;
+    }
 }
 
 extern "C"
@@ -645,6 +657,8 @@ void wxGLCanvasEGL::OnRealized()
         wl_surface_set_input_region(m_wlSurface, m_wlRegion);
         int scale = gdk_window_get_scale_factor(window);
         wl_surface_set_buffer_scale(m_wlSurface, scale);
+        m_wlBufferScale = scale;
+        m_wlPendingBufferScale = 0;
         m_wlEGLWindow = wl_egl_window_create(m_wlSurface, w * scale,
                                              h * scale);
         m_surface = CallCreatePlatformWindowSurface(m_wlEGLWindow);
@@ -959,12 +973,38 @@ bool wxGLCanvasEGL::SwapBuffers()
             wxLogTrace(TRACE_EGL, "Window %p is not not ready to draw yet", this);
             return false;
         }
+
+        // Apply a changed buffer scale (see wxEGLUpdateGeometry()) only from
+        // the second frame after the resize: the first one may still use a
+        // buffer allocated with the old size, the next one uses the new size,
+        // which is always a multiple of the new scale.
+        if ( m_wlPendingBufferScale )
+        {
+            if ( m_wlPendingScaleSwapped )
+            {
+                wl_surface_set_buffer_scale(m_wlSurface, m_wlPendingBufferScale);
+                m_wlBufferScale = m_wlPendingBufferScale;
+                m_wlPendingBufferScale = 0;
+            }
+            else
+            {
+                m_wlPendingScaleSwapped = true;
+            }
+        }
     }
 #endif // GDK_WINDOWING_WAYLAND
 
     wxLogTrace(TRACE_EGL, "Swapping buffers for window %p", this);
 
-    return eglSwapBuffers(m_display, m_surface);
+    const bool swapped = eglSwapBuffers(m_display, m_surface);
+
+#ifdef GDK_WINDOWING_WAYLAND
+    // Make sure there is a next frame to apply a pending buffer scale in.
+    if ( m_wlPendingBufferScale )
+        m_canvas->Refresh(false);
+#endif // GDK_WINDOWING_WAYLAND
+
+    return swapped;
 }
 
 wxGLCanvas::SwapInterval wxGLCanvasEGL::DoSetSwapInterval(int interval)
